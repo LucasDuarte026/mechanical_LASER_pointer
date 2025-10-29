@@ -1,134 +1,169 @@
 #include <Arduino.h>
 #include <Servo.h>
 
-// Define servo angle limits for normalization
-#define MIN_X 0    // Minimum angle for X servo
-#define MAX_X 130  // Maximum angle for X servo
-#define MIN_Y 0    // Minimum angle for Y servo
-#define MAX_Y 90   // Maximum angle for Y servo
+// The firmware expects normalized commands in the ``x y`` format, where each
+// value ranges from 0 to 100. That gives ~1.8° resolution for standard 180°
+// hobby servos because 100 steps cover the 1 ms to 2 ms control pulse span.
 
-// Create servo objects
-Servo servoMotor_x;
-Servo servoMotor_y;
+// Angle limits in degrees for the two axes. They can be updated in the field
+// if the mechanical assembly changes.
+constexpr float kMinX = 0.0f;
+constexpr float kMaxX = 130.0f;
+constexpr float kMinY = 0.0f;
+constexpr float kMaxY = 80.0f;
 
-// Define servo pins
-int pinoServo_x = 6; // X servo pin
-int pinoServo_y = 5; // Y servo pin
+// Output pins used by the gimbal.
+constexpr uint8_t kServoPinX = 6;
+constexpr uint8_t kServoPinY = 5;
 
-void setupServos() {
-  // Attach servos to pins
-  servoMotor_x.attach(pinoServo_x);
-  servoMotor_y.attach(pinoServo_y);
-  
-  // Set initial positions
-  servoMotor_x.write(90); // Center position
-  servoMotor_y.write(45); // Center position
+Servo servoX;
+Servo servoY;
+
+void setupServos()
+{
+  servoX.attach(kServoPinX);
+  servoY.attach(kServoPinY);
+
+  servoX.write(90); // Start in the middle of the travel range.
+  servoY.write(45);
 }
 
-void moveServo(int servo, double normalized_position) {
-  // Calculate target angle based on servo and normalized position
-  int target_angle;
+void moveOne(int servo, int value)
+{
+  const bool isX = servo == 0;
+  const float normalized = value / 100.0f;
 
-  if (servo == 0) { // X servo
-    target_angle = MIN_X + (normalized_position * (MAX_X - MIN_X));
-    servoMotor_x.write(target_angle);
-    Serial.print("Moving X servo to angle: ");
-    Serial.println(target_angle);
-  } else if (servo == 1) { // Y servo
-    target_angle = MIN_Y + (normalized_position * (MAX_Y - MIN_Y));
-    servoMotor_y.write(target_angle);
-    Serial.print("Moving Y servo to angle: ");
-    Serial.println(target_angle);
+  if (isX)
+  {
+    const int targetAngle = kMinX + normalized * (kMaxX - kMinX);
+    servoX.write(targetAngle);
+    Serial.print("Moved: servo_x: ");
+    Serial.print(value);
+    Serial.println(" |  servo_y:  n");
   }
-
-  // Wait for servo to reach position (approximate timing)
-  delay(500); // Adjust based on servo speed
-
-  Serial.println("Servo reached target position");
-}
-
-
-
-
-void processCommand(String command) {
-  // Parse the command
-  int spaceIndex = command.indexOf(' ');
-  if (spaceIndex > 0) {
-    // Extract servo number (0 or 1)
-    String servoStr = command.substring(0, spaceIndex);
-    int servo = servoStr.toInt();
-
-    // Extract position (0.0 to 1.0)
-    String positionStr = command.substring(spaceIndex + 1);
-    double normalized_position = positionStr.toDouble();
-
-    // Validate inputs
-    if (servo >= 0 && servo <= 1 && normalized_position >= 0.0 && normalized_position <= 1.0) {
-      // Initialize servos if not already done
-      
-      // Move servo to target position
-      moveServo(servo, normalized_position);
-      
-      Serial.println("Command completed - ready for next command");
-    } else {
-      Serial.println("Invalid command. Use format: servo position");
-      Serial.println("servo: 0 (X) or 1 (Y)");
-      Serial.println("position: 0.0 to 1.0");
-    }
-  } else {
-    Serial.println("Invalid command format. Use: servo position");
-    Serial.println("Example: 0 0.5");
+  else if (servo == 1)
+  {
+    const int targetAngle = kMinY + normalized * (kMaxY - kMinY);
+    servoY.write(kMaxY - targetAngle); // Invert to match mechanical setup.
+    Serial.print("Moved: servo_x: n");
+    Serial.print(" |  servo_y:  ");
+    Serial.println(value);
   }
 }
 
-void setup() {
-  // Initialize serial communication for debugging
+void moveServo(int servo_x, int servo_y)
+{
+  if (servo_x || servo_x == 0)
+  {
+    const float normalized = servo_x / 100.0f;
+    const int targetAngle = kMinX + normalized * (kMaxX - kMinX);
+    servoX.write(targetAngle);
+  }
+
+  if (servo_y || servo_y == 0)
+  {
+    const float normalized = servo_y / 100.0f;
+    const int targetAngle = kMinY + normalized * (kMaxY - kMinY);
+    servoY.write(kMaxY - targetAngle);
+  }
+
+  Serial.print("Moved: servo_x: ");
+  Serial.print(servo_x);
+  Serial.print(" |  servo_y:  ");
+  Serial.println(servo_y);
+}
+
+void processCommand(String command)
+{
+  // Commands follow the "<x> <y>" convention. Use "n" to keep the last value.
+  command.trim();
+  const int spaceIndex = command.indexOf(' ');
+
+  if (spaceIndex <= 0)
+  {
+    Serial.println("Invalid command format. Use: servo_x servo_y");
+    Serial.println("Example: 50 50");
+    return;
+  }
+
+  String first = command.substring(0, spaceIndex);
+  String second = command.substring(spaceIndex + 1);
+  first.trim();
+  second.trim();
+
+  int servo_x;
+  int servo_y;
+
+  if (first == "n")
+    servo_x = -1;
+  else
+    servo_x = first.toInt();
+
+  if (second == "n")
+    servo_y = -1;
+  else
+    servo_y = second.toInt();
+
+  if (servo_x >= 0 && servo_x <= 100 && servo_y >= 0 && servo_y <= 100)
+  {
+    moveServo(servo_x, servo_y);
+  }
+  else if (servo_y == -1 && servo_x != -1)
+  {
+    moveOne(0, servo_x);
+  }
+  else if (servo_x == -1 && servo_y != -1)
+  {
+    moveOne(1, servo_y);
+  }
+  else if (servo_x == -1 && servo_y == -1)
+  {
+    Serial.println("n n command.");
+  }
+  else
+  {
+    Serial.println("Invalid command. Use normalized values (0 - 100).");
+    Serial.println("Example: 50 50");
+  }
+}
+
+void setup()
+{
   Serial.begin(9600);
-  
-  Serial.println();
-  Serial.println("------------------ Servo control initialized ------------------" );
-  Serial.println("Waiting for command in format: servo position");
-  Serial.println("Example: 0 0.5 (X servo, 50% position)");
-  Serial.println("Send commands via serial communication");
-  setupServos();
 
+  Serial.println();
+  Serial.println("------------------ Servo control initialized ------------------");
+  Serial.println("Waiting for commands in the form 'servo_x servo_y'.");
+  Serial.println("Example: 55 100 (55% for X, 100% for Y).");
+  Serial.println("Send commands via the serial terminal.");
+
+  setupServos();
 }
 
-
-void loop() {
+void loop()
+{
   static String inputBuffer = "";
-  
-  // Read all available characters
-  while (Serial.available() > 0) {
-    char incomingChar = Serial.read();
-    
-    if (incomingChar == '\n' || incomingChar == '\r') {
-      // End of line reached, process the command
+
+  while (Serial.available() > 0)
+  {
+    const char incomingChar = Serial.read();
+
+    if (incomingChar == '\n' || incomingChar == '\r')
+    {
       inputBuffer.trim();
-      
-      if (inputBuffer.length() > 0) {
-        Serial.print("Received command: ");
-        Serial.println(inputBuffer);
-        
+
+      if (inputBuffer.length() > 0)
+      {
+
         processCommand(inputBuffer);
         Serial.println();
       }
-      
-      inputBuffer = ""; // Clear buffer for next command
-    } else {
+
+      inputBuffer = "";
+    }
+    else
+    {
       inputBuffer += incomingChar;
     }
   }
 }
-/*
-
-0 0
-0 1
-0 0.5
-
-1 0
-1 1
-1 0.5
-
-
-*/
